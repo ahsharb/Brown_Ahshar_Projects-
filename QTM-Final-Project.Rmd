@@ -1,0 +1,281 @@
+---
+title: "Final Project"
+output: html_document
+date: "2024-11-19"
+---
+
+```{r setup, include=FALSE}
+knitr::opts_chunk$set(echo = TRUE)
+knitr::opts_knit$set(root.dir = "~/Desktop/qtm150/350")
+```
+
+```{r}
+#install.packages("anyflights")
+library("anyflights")
+```
+
+```{r}
+# Code below subsets ATL flights from 2020 and 2023 only
+
+get_all_flights <- function(origin, year) {
+  flights <- list()
+  for (month in 1:12) {
+    flights[[month]] <- get_flights(origin, year = year, month = month)
+  }
+  return(flights)
+}
+
+options(timeout = 600)  # Set timeout to 10 minutes
+
+
+flights_2020 <- get_all_flights("ATL", 2020)
+flights_2023 <- get_all_flights("ATL", 2023)
+
+# Code Below combines the two datasets from ATL flights 2020 and 2023 - Outputs/Generates csv files for both years
+library(dplyr)
+
+# Combine monthly data into a single data frame for a specific year
+combine_flights <- function(flights_list) {
+  do.call(rbind, flights_list)
+}
+
+flights_2020_combined <- combine_flights(flights_2020)
+flights_2023_combined <- combine_flights(flights_2023)
+
+# Save to CSV files
+write.csv(flights_2020_combined, "flights_2020.csv", row.names = FALSE)
+write.csv(flights_2023_combined, "flights_2023.csv", row.names = FALSE)
+
+flights_2020_combined <- read.csv("flights_2020_combined")
+flights_2023_combined <- read.csv("flights_2023_combined")
+```
+
+```{r}
+# SUBQUESTION 1 - BAR GRAPH
+
+# data selection for subquestion 1
+top_airports_atl <- c("DFW", "DEN", "LAX", "ORD", "JFK")
+top_airports_lax <- c("ATL", "DEN", "DFW", "ORD", "JFK")
+
+filter_data <- function(data, origin, top_airports) {
+  data %>%
+    filter(origin == origin & dest %in% top_airports) %>%
+    group_by(dest, carrier) %>%
+    summarise(flights = n(), .groups = "drop")
+}
+get_all_flights <- function(origin, year) {
+  flights <- list()
+  for (month in 1:12) {
+    flights[[month]] <- get_flights(origin, year = year, month = month)
+  }
+  return(flights)
+}
+
+flights_2020_ATL <- get_all_flights("ATL", 2020)
+flights_2023_ATL <- get_all_flights("ATL", 2023)
+flights_2020_LAX <- get_all_flights("LAX", 2020)
+flights_2023_LAX <- get_all_flights("LAX", 2023)
+
+library(dplyr)
+
+combine_flights <- function(flights_list) {
+  do.call(rbind, flights_list) }
+
+flights_2020_combined_ATL <- combine_flights(flights_2020_ATL)
+flights_2023_combined_ATL <- combine_flights(flights_2023_ATL)
+flights_2020_combined_LAX <- combine_flights(flights_2020_LAX)
+flights_2023_combined_LAX <- combine_flights(flights_2023_LAX)
+
+
+atl_2020 <- filter_data(flights_2020_combined_ATL, "ATL", top_airports_atl)
+atl_2023 <- filter_data(flights_2023_combined_ATL, "ATL", top_airports_atl)
+lax_2020 <- filter_data(flights_2020_combined_LAX, "LAX", top_airports_lax)
+lax_2023 <- filter_data(flights_2023_combined_LAX, "LAX", top_airports_lax)
+
+data <- function(data, year) {
+  data %>%
+    mutate(year = year) %>%
+    pivot_wider(names_from = carrier, values_from = flights, values_fill = 0) %>%
+    pivot_longer(cols = -c(dest, year), names_to = "carrier", values_to = "flights")
+}
+
+atl_2020 <- data(atl_2020, 2020)
+atl_2023 <- data(atl_2023, 2023)
+lax_2020 <- data(lax_2020, 2020)
+lax_2023 <- data(lax_2023, 2023)
+
+atl_compared <- bind_rows(atl_2020, atl_2023)
+lax_compared <- bind_rows(lax_2020, lax_2023)
+
+write.csv(atl_compared, "atl_compared.csv", row.names = FALSE)
+write.csv(lax_compared, "lax_compared.csv", row.names = FALSE)
+
+# visual representation
+atl_compared<-read.csv("atl_compared.csv")
+lax_compared<-read.csv("lax_compared.csv")
+
+  ggplot(atl_compared, aes(x = dest, y = flights, fill = carrier)) +
+  geom_bar(stat = "identity", position = "dodge") +
+  facet_wrap(~year) +
+  labs(title = "ATL Flights Comparison: 2020 vs 2023",
+       x = "Destination Airport", y = "Number of Flights") +
+  theme_minimal()
+
+  ggplot(lax_compared, aes(x = dest, y = flights, fill = carrier)) +
+  geom_bar(stat = "identity", position = "dodge") +
+  facet_wrap(~year) +
+  labs(title = "LAX Flights Comparison: 2020 vs 2023",
+       x = "Destination Airport", y = "Number of Flights") +
+  theme_minimal()
+```
+
+
+```{r}
+# SUBQUESTION 2 - LINE GRAPH
+library(dplyr)
+library(plotly)
+
+# Add a column to distinguish the year in each dataset
+flights_2020_combined <- flights_2020_combined %>% mutate(year_group = "2020")
+flights_2023_combined <- flights_2023_combined %>% mutate(year_group = "2023")
+
+# Combine both datasets
+flights_combined <- bind_rows(flights_2020_combined, flights_2023_combined)
+
+# Calculate delay and cancellation rates
+flights_calculated <- flights_combined %>%
+  group_by(year_group, year, month, day) %>%
+  summarize(
+    avg_delay = mean(dep_delay, na.rm = TRUE),        # Average flight departure delay
+    cancel_rate = mean(minute == 0, na.rm = TRUE) * 100  # Average flight cancellation rate
+  ) %>%
+  mutate(date = as.Date(paste(year, month, day, sep = "-"))) # Combine year, month, and day 
+
+# Line plot using Plotly
+plot_ly() %>%
+  add_lines(
+    data = flights_calculated %>% filter(year_group == "2020"),  # Filter for 2020
+    x = ~date,
+    y = ~avg_delay,
+    name = "Average Delay During Covid (2020)",
+    line = list(color = "skyblue")
+  ) %>%
+  add_lines(
+    data = flights_calculated %>% filter(year_group == "2020"),  # Filter for 2020
+    x = ~date,
+    y = ~cancel_rate,
+    name = "Cancellation Rate During Covid (2020)",
+    line = list(color = "blue")
+  ) %>%
+  add_lines(
+    data = flights_calculated %>% filter(year_group == "2023"),  # Filter for 2023
+    x = ~date,
+    y = ~avg_delay,
+    name = "Average Delay After Covid (2023)",
+    line = list(color = "pink")
+  ) %>%
+  add_lines(
+    data = flights_calculated %>% filter(year_group == "2023"),  # Filter for 2023
+    x = ~date,
+    y = ~cancel_rate,
+    name = "Cancellation Rate After Covid (2023)",
+    line = list(color = "purple")
+  ) %>%
+  layout(
+    title = "Delay and Cancellation Rates During Covid (2020) and After Covid (2023)",
+    xaxis = list(title = "Date of Flight"),
+    yaxis = list(title = "# of cancellations and delays"),
+    legend = list(title = list(text = "Key"))
+  )
+
+```
+
+```{r}
+# SUBQUESTION 3 - ANIMATED MAP
+# loading libraries
+library(anyflights)
+library(maps)
+library(usdata)
+library(ggmap)
+library(ggthemes)
+library(tidyverse)
+library(plotly)
+
+state<-map_data("state")
+
+# retrieving instances of destination airports appearing in the 2020 project data set for a given month.
+mofli20<-flights_2020_combined %>%
+  count(month,dest)
+
+# categorizing destination airports as "east" or "west" based on time zone
+  # eastern and central = east
+  # mountain, pacific, and arizona = west
+  # remove alaska and hawaii-aleutian
+
+# creating 2020 dataset which contains information about the number of flights per destination airport per month per region (perdest)
+# also includes latitude and longitude of destination airports
+
+question3_2020data<- flights_2020_combined %>%
+  left_join(airports %>% select (faa, tzone), by = c("dest" ="faa"))%>%
+  filter(tzone %in% c("America/New_York", "America/Chicago", "America/Los_Angeles", "America/Phoenix", "America/Denver")) %>%
+  mutate(region = ifelse(tzone %in% c("America/Chicago", "America/New_York"), "East", "West"))%>%
+  group_by(dest, month, region) %>%
+  summarize(perdest=n(), .groups = "drop")%>%
+  left_join(airports %>% select (faa, lon, lat),by=c("dest"="faa"))%>%
+  rename(latitude = lat) %>%
+  left_join(mofli20 %>% count(dest), by="dest") %>%
+  filter(n==12)
+
+# add points representing number of flights per destination airport per month (perdest)
+# assign different colors to points based on region
+# also assign different sizes based on perdest
+
+# state map
+p<- ggplot(state)+
+  geom_polygon(aes(x=long, y=lat, group = group), fill="white", color ="black")+ # state map
+  geom_point(data=question3_2020data,
+             aes(x=lon, y=latitude, size=perdest, color=region, frame= month), na.rm=T)+ # plot data1 on the map
+  scale_size(name = "Flights per Destination", range=c(0.01,4))+
+  scale_color_manual(name= "Airport Region", values = c("East" = "red", "West" = "blue"))+
+  coord_fixed(1.2)+
+  theme_void() +
+  labs(title = "2020 Data")
+
+# put ggplot object in ggplotly() and add animation options
+ggplotly(p) %>%
+    animation_opts(frame= 2000, easing = "linear", mode = "immediate")
+
+# repeating process for 2023 data
+
+# retrieving instances of destination airports appearing in the 2023 project data set for a given month.
+mofli23<- flights_2023_combined %>%
+  count(month,dest)
+
+# creating 2023 dataset to be used in ggplot object
+question3_2023data<- flights_2023_combined %>%
+  left_join(airports %>% select (faa, tzone), by = c("dest" ="faa"))%>%
+  filter(tzone %in% c("America/New_York", "America/Chicago", "America/Los_Angeles", "America/Phoenix", "America/Denver")) %>%
+  mutate(region = ifelse(tzone %in% c("America/Chicago", "America/New_York"), "East", "West"))%>%
+  group_by(dest, month, region) %>%
+  summarize(perdest=n())%>%
+  left_join(airports %>% select (faa, lon, lat),by=c("dest"="faa"))%>%
+  rename(latitude = lat) %>%
+  left_join(mofli23 %>% count(dest), by="dest") %>%
+  filter(n==12)
+
+# creating ggplot object
+q<- ggplot(state)+
+  geom_polygon(aes(x=long, y=lat, group = group), fill="white", color ="black")+ #state map
+  geom_point(data=question3_2023data,
+             aes(x=lon, y=latitude, size=perdest, color=region, frame= month), na.rm=T)+ #plot data on the map
+  scale_size(name = "Flights per Destination", range=c(0.01,4))+
+  scale_color_manual(name= "Airport Region", values = c("East" = "red", "West" = "blue"))+
+  coord_fixed(1.2)+
+  theme_void() +
+  labs(title = "2023 Data")
+
+# animation
+  ggplotly(q) %>%
+    animation_opts(frame= 2000, easing = "linear", mode = "immediate")
+```
+
