@@ -1,0 +1,360 @@
+---
+title: "Moffitt Lab"
+output: html_document
+date: "2025-02-20"
+---
+
+```{r setup, include=FALSE}
+knitr::opts_chunk$set(echo = TRUE)
+knitr::opts_knit$set(root.dir = "~/Desktop/moffitt lab")
+
+all_times <- list()  # store the time for each chunk
+knitr::knit_hooks$set(time_it = local({
+  now <- NULL
+  function(before, options) {
+    if (before) {
+      now <<- Sys.time()
+    } else {
+      res <- difftime(Sys.time(), now, units = "secs")
+      all_times[[options$label]] <<- res
+    }
+  }
+}))
+knitr::opts_chunk$set(
+  tidy = TRUE,
+  tidy.opts = list(width.cutoff = 95),
+  message = FALSE,
+  warning = FALSE,
+  time_it = TRUE,
+  error = TRUE
+)
+```
+
+```{r}
+library(dplyr)
+library(Seurat)
+library(patchwork)
+
+# Read the existing Seurat object from the RDS file
+D <- readRDS(file="/Users/ahsharbrown/Downloads/GSE239721_aml_seurat.RDS")
+
+# Confirm that 'D' is a Seurat object
+class(D)  # Should return "Seurat"
+```
+
+```{r}
+# If you want to extract the raw counts:
+counts_matrix <- GetAssayData(D, assay = "RNA", slot = "counts")
+
+# Now, you can create a new Seurat object (if needed)
+rds <- CreateSeuratObject(counts = counts_matrix, project = "rds_stuff") # why does this drop to 18139 cells instead of 56168 cells # min.cells = 3
+
+#The drop in cell count from 56168 to 18139 when creating the Seurat object is likely due to the default filtering applied by CreateSeuratObject. Specifically: min.cells = 3 (default setting) This means that genes (features) that are detected in fewer than 3 cells are filtered out. However, this shouldn’t directly affect the number of cells. min.features = 200 (default setting) By default, CreateSeuratObject removes cells that express fewer than 200 genes. If many cells have low gene expression (e.g., due to ambient RNA or low-quality cells), they will be filtered out.
+
+
+
+# Lets examine a few genes in the first thirty cells
+# Extract raw count data
+counts_matrix <- GetAssayData(rds, assay = "RNA", slot = "counts")
+
+# Subset for the genes and first 30 cells
+# D[c("CD3D","TCL1A","MS4A1"), 1:30]
+# grep("CD3", rownames(D), value = TRUE)  # Find similar gene names
+
+D[c("CD302", "HACD3","CD37"), 1:30]
+
+counts_matrix[c(
+  "ABCD3", "CD34", "PTCD3", "CD302", "CD38", "NUDCD3", "CD36", "SMARCD3", "C2CD3", "CD3E",
+  "CD3D", "CD3G", "HACD3", "TLCD3B", "TLCD3A", "PLCD3", "CD300A", "CD300LB",
+  "CD300C", "CD300E", "CD300LF", "CD320", "CD3EAP", "CD37", "CD33", "CD300LD", "CD300LG"), 1:30]
+
+counts_matrix[c("CD302", "HACD3","CD37"), 1:30]
+
+#"CD302", "HACD3","CD37" 
+
+#The `.` values in the matrix represent 0s (no molecules detected). Since most values in an scRNA-seq matrix are 0,  Seurat uses a sparse-matrix representation whenever possible. This results in significant memory and speed savings for Drop-seq/inDrop/10x data.
+```
+```{r}
+# dense.size <- object.size(as.matrix(D))
+# dense.size
+# sparse.size <- object.size(D)
+# sparse.size
+# dense.size / sparse.size
+```
+
+#Standard Pre Processing Worklfow 
+Standard pre-processing workflow for scRNA-seq data in Seurat
+- selection and filtration of cells based on QC metrics
+- data normalization and scaling
+- detection of highly variable features
+
+##QC and selecting cells 
+Explore QC metrics and filter cells
+- The number of unique genes detected 
+- Total number of molecules detected w/in the cell 
+- Percentage of reads that map onto the mitochondrial genome 
+  - `PercentageFeatureSet()`: calculates the percentage of of counts originiating from a set or features (genes)
+- The percentage of counts originating from a set of features (MT)
+```{r}
+# The [[ operator can add columns to object metadata. This is a great place to stash QC stats
+rds[["percent.mt"]] <- PercentageFeatureSet(rds, pattern = "^MT-")
+
+head(rds[["percent.mt"]])
+min(rds[["percent.mt"]])
+max(rds[["percent.mt"]])
+hist(rds[["percent.mt"]]$percent.mt)
+
+#This code calcuates the percentage of counts originating from a set of features (genes)
+```
+
+`CreateSeuratObject()`: number of unique genes and total molecules are automatically calculated 
+This information was stored in the meta data object 
+```{r}
+# Show QC metrics for the first 5 cells
+head(D@meta.data, 5) # inheriting all the labels from the original authors
+head(rds@meta.data,5) # fresh start using only count matrix
+#This code shows the number of unique genes and total molecules that were calculated 
+
+#nCount = number of counts 
+#nFeature = number of genes 
+```
+
+This code visualizes the QC metrics we made above - We can use them to filter cells 
+- Greater than 5% mitochondrial counts + unique feature(genes) counts over 200 and under 2,500 are filtered 
+```{r}
+#Visualize QC metrics as a violin plot
+#Built in to Seurat 
+VlnPlot(rds, features = c("nFeature_RNA", "nCount_RNA", "percent.mt"), ncol = 3) # how to get this to not split by cell
+#VlnPlot(rds, features = c("nFeature_RNA", "nCount_RNA", "percent.mt"), ncol = 3, group.by = "orig.ident") 
+#VlnPlot(rds, features = c("nFeature_RNA", "nCount_RNA", "percent.mt"), ncol = 3, split.by = NULL)
+
+
+
+# data("pbmc_small") # example dataset
+# VlnPlot(object = pbmc_small, features = 'PC_1')
+# VlnPlot(object = pbmc_small, features = 'LYZ', split.by = 'groups')
+
+# FeatureScatter is typically used to visualize feature-feature(gene-gene) relationships, but can be used for anything calculated by the object, i.e. columns in object metadata, PC scores etc.
+
+plot1 <- FeatureScatter(rds, feature1 = "nCount_RNA", feature2 = "percent.mt") 
+plot2 <- FeatureScatter(rds, feature1 = "nCount_RNA", feature2 = "nFeature_RNA") 
+plot1 + plot2
+
+hist(rds@meta.data$nFeature_RNA)
+hist(rds@meta.data$percent.mt)
+
+rds <- subset(rds, subset = nFeature_RNA > 200 & nFeature_RNA < 5000 & percent.mt < 8) # THIS IS FILTER FOR CELLS AND GENE
+```
+Graph 1 Interpretation: 
+Identity = different samples 
+Y-axis: RNA Sequencing 
+Data Points = single cell 
+
+nFeature_RNA Graph: # of unique RNA genes in each sample 
+nCount_RNA Graph: # of RNA molecule part for each cell 
+percent.mt Graph: % of mitochondrial RNA in each sample 
+
+Graph 2 Interpretation: 
+nCount_RNA = # of RNA molecule part for each cell 
+percent.mt = % of mitochondrial RNA in each sample 
+-0.1 = 
+0.92 = 
+Data Points = different cells ?
+
+#Normalizing the data 
+"LogNormalize" - Normalizes the feature (gene) expression measurements for each cell by the total expression, multiplies this by a scale factor (10,000 by default), and log-transforms the result
+`pbmc[["RNA"]]$data: stores normalized data 
+```{r}
+#Normalizing from cell to cell 
+rds <- NormalizeData(rds, normalization.method = "LogNormalize", scale.factor = 1e4)
+
+#rds <- NormalizeData(rds) #this line does the same function as the line above 
+
+a=GetAssayData(rds, assay = "RNA", slot = "counts") # to demonstrate counts vs. normalized "data"
+b=GetAssayData(rds, assay = "RNA", slot = "data")
+
+head(a)
+head(b)
+```
+
+#Identification of highly variable features(genes) - (feature (gene) selection)
+Calculate a subset of features (genes) that exhibit high cell-to-cell variation in the dataset - they are highly expressed in some cells, and lowly expressed in others.
+```{r}
+rds <- FindVariableFeatures(rds, selection.method = 'vst', nfeatures = 2000)
+
+# Identify the 10 most highly variable genes
+top10 <- head(VariableFeatures(rds), 10)
+
+# plot variable features with and without labels
+# plot1 <- VariableFeaturePlot(rds)
+# plot2 <- LabelPoints(plot = plot1, points = top10, repel = TRUE)
+# plot1 + plot2
+
+plot1 <- VariableFeaturePlot(rds)  
+LabelPoints(plot = plot1, points = top10, repel = TRUE)
+
+
+```
+
+Average Expression = How much a gene is expressed on average across all cells
+Standardized Variance =  How much the expression of a gene varies across different cells
+Data points = each gene 
+
+Interpretation: The genes labeled S100A8, S100A9, LYZ, PRG2 are among the most variable - they are likely important for distinguishing between different cell types or states.
+
+#Scaling the data 
+`ScaleData()`: Applies a linear transformation on the data 
+  - Shifts the expression of each gene, so that the mean expression across cells is 0
+  - Scales the expression of each gene, so that the variance across cells is 1
+    + This step gives equal weight in downstream analyses, so that highly-expressed genes do not dominate
+`pbmc[["RNA"]]$scale.data`: stores results 
+  - By default, only variable features (highly expressed genes) are scaled. 
+  - You can specify the `features` argument to scale additional features
+```{r}
+all.genes <- rownames(rds)
+rds <- ScaleData(rds, features = all.genes)
+```
+ScaleData()`: remove unwanted sources of variation from a single-cell dataset
+```{r}
+rds <- ScaleData(rds, vars.to.regress = 'percent.mt')
+```
+
+# Perform linear dimensional reduction
+Perform PCA on the scaled data. By default, only the previously determined variable features are used as input
+  - Seurat outputs a list of genes with the most positive and negative loadings, representing modules of genes that exhibit either correlation (or anti-correlation) across single-cells in the dataset
+    - Seurat identifies groups of genes that show similar or opposite patterns of expression across different cells
+```{r}
+rds <- RunPCA(rds, features = VariableFeatures(object = rds))
+```
+
+```{r}
+# Examine and visualize PCA results a few different ways
+print(rds[['pca']], dims = 1:5, nfeatures = 5)
+VizDimLoadings(rds, dims = 1:2, reduction = 'pca')
+#DimPlot(rds, reduction = 'pca') + NoLegend()
+DimPlot(rds, reduction = "pca", label = TRUE) + NoLegend()
+```
+Interpretation: 
+
+
+
+`DimHeatmap()` allows for easy exploration of the primary sources of heterogeneity in a dataset, and can be useful when trying to decide which PCs to include for further downstream analyses. Both cells and features are ordered according to their PCA scores. Setting `cells` to a number plots the 'extreme' cells on both ends of the spectrum, which dramatically speeds plotting for large datasets. Though clearly a supervised analysis, we find this to be a valuable tool for exploring correlated feature sets.
+  - helps visualize the variability (heterogeneity) in your single-cell RNA sequencing (scRNA-seq) dataset using Principal Component Analysis (PCA).
+  - heatmap that shows how genes (features) and cells contribute to Principal Components (PCs) in PCA
+```{r}
+#DimHeatmap(rds, dims = 1, cells = 500, balanced = TRUE)
+DimHeatmap(rds, dims = 1:2, cells = 1000, balanced = FALSE)
+```
+
+```{r}
+DimHeatmap(rds, dims = 1:15, cells = 500, balanced = TRUE)
+```
+
+#Determine the 'dimensionality' of the dataset
+Seurat clusters cells based on their PCA scores, with each PC essentially representing a 'metafeature' that combines information across a correlated feature set. The top principal components therefore represent a robust compression of the dataset. However, how many components should we choose to include? 10? 20? 100?
+
+An alternative heuristic method generates an 'Elbow plot': a ranking of principle components based on the percentage of variance explained by each one (`ElbowPlot()` function). 
+
+Key Features: 
+At first, the graph drops sharply—this means the first few PCs capture most of the important information.
+Then, the graph flattens out—this means additional PCs don’t add much new useful information.
+```{r}
+ElbowPlot(rds)
+```
+
+#Cluster the cells 
+Seurat has a graph-based clustering approach
+`Idents()`: where clusters can be found 
+```{r}
+rds <- FindNeighbors(rds, dims = 1:10)
+rds <- FindClusters(rds, resolution = 0.5)
+
+# Look at cluster IDs of the first 5 cells
+head(Idents(rds), 5)
+```
+
+#Run non-linear dimensional reduction (UMAP/tSNE)
+Seurat offers several non-linear dimensional reduction techniques, such as tSNE and UMAP, to visualize and explore these datasets.
+Cells that are grouped together within graph-based clusters determined above should co-localize on these dimension reduction plots. 
+  - Seurat provides tSNE and UMAP, which are special methods used to simplify complex data and make it easier to visualize. These methods help you see patterns in your dataset by placing similar cells close together in a 2D or 3D plot.
+```{r}
+rds <- RunUMAP(rds, dims = 1:10)
+```
+
+```{r}
+# note that you can set `label = TRUE` or use the LabelClusters function to help label individual clusters
+DimPlot(rds, reduction = 'umap')
+```
+Data Points = a single cell 
+Clusters = Cells with similar gene expression grouped together
+  - Clusters correspond to different cell types or states, which can be identified through further analysis.
+Different colors = different clusters, labeled with numbers (0-14) on the right.
+```{r}
+saveRDS(rds, file = "../output/rds_tutorial.rds")
+```
+
+# Finding differentially expressed features (cluster biomarkers)
+Find markers that define clusters via differential expression (DE). By default, it identifies positive and negative markers of a single cluster (specified in `ident.1`), compared to all other cells  
+  - This function compares a specified cluster (ident.1) against all other clusters to identify genes that are significantly upregulated (positive markers) or downregulated (negative markers) in that cluster.
+`FindAllMarkers()`: automates this process for all clusters, but you can also test groups of clusters vs. each other, or against all cells.
+```{r}
+# find all markers of cluster 2
+cluster2.markers <- FindMarkers(rds, ident.1 = 2)
+head(cluster2.markers, n = 5)
+# find all markers distinguishing cluster 5 from clusters 0 and 3
+cluster5.markers <- FindMarkers(rds, ident.1 = 5, ident.2 = c(0, 3))
+head(cluster5.markers, n = 5)
+# find markers for every cluster compared to all remaining cells, report only the positive ones
+rds.markers <- FindAllMarkers(rds, only.pos = TRUE)
+rds.markers %>%
+    group_by(cluster) %>%
+    dplyr::filter(avg_log2FC > 1)
+```
+```{r}
+cluster0.markers <- FindMarkers(rds, ident.1 = 0, logfc.threshold = 0.25, test.use = "roc", only.pos = TRUE)
+```
+`VlnPlot()`: shows expression probability distributions across clusters
+`FeaturePlot()`: visualizes feature expression on a tSNE or PCA plot 
+```{r}
+# VlnPlot(rds, features = c( "ABCD3", "CD34", "PTCD3"))
+# # you can plot raw counts as well
+# VlnPlot(rds, features = c( "ABCD3", "CD34", "PTCD3"), slot = 'counts', log = TRUE)
+
+VlnPlot(rds, features = c("CD302", "HACD3","CD37"))
+# you can plot raw counts as well
+VlnPlot(rds, features = c("CD302", "HACD3","CD37"), slot = 'counts', log = TRUE)
+
+#"CD302", "HACD3","CD37"
+```
+
+```{r}
+#FeaturePlot(rds, features = c( "ABCD3", "CD34", "PTCD3", "CD302", "CD38", "NUDCD3", "CD36", "SMARCD3", "C2CD3"))
+
+FeaturePlot(rds, features = c("CD302", "HACD3","CD37", "CD302", "CD38", "NUDCD3", "CD36", "SMARCD3", "C2CD3"))
+#"CD302", "HACD3","CD37"
+```
+`DoHeatmap()`: generates an expression heatmap for given cells and features (genes).
+```{r}
+rds.markers %>%
+    group_by(cluster) %>%
+    dplyr::filter(avg_log2FC > 1) %>%
+    slice_head(n = 10) %>%
+    ungroup() -> top10
+DoHeatmap(rds, features = top10$gene) + NoLegend()
+```
+# Assigning cell type identity to clusters
+```{r}
+# new.cluster.ids <- c("Naive CD4 T", "CD14+ Mono", "Memory CD4 T", "B", "CD8 T", "FCGR3A+ Mono", "NK", "DC", "Platelet")
+# names(new.cluster.ids) <- levels(rds)
+# pbmc <- RenameIdents(rds, new.cluster.ids)
+# DimPlot(rds, reduction = 'umap', label = TRUE, pt.size = 0.5) + NoLegend()
+```
+
+```{r}
+library(ggplot2)
+plot <- DimPlot(rds, reduction = "umap", label = TRUE, label.size = 4.5) + xlab("UMAP 1") + ylab("UMAP 2") + 
+  theme(axis.title = element_text(size = 18), legend.text = element_text(size = 18)) + 
+  guides(colour = guide_legend(override.aes = list(size = 10)))
+ggsave(filename = "../output/images/rds_umap.jpg", height = 7, width = 12, plot = plot, quality = 50)
+```
+
